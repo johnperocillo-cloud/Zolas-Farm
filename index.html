@@ -292,7 +292,7 @@ const GID_PROF    = '1003209625';
 const GID_FG      = '1647876215';
 const REFRESH_MS  = 5 * 60 * 1000;
 
-const url = (id,gid) => `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${gid}&t=${Date.now()}`;
+const url = (id,gid) => `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}&t=${Date.now()}`;
 
 const VEG_COLORS = {
   'Ampalaya':'#1A6B3C','Kangkong':'#E53935','Pechay':'#1565C0','Kamatis':'#F57F17',
@@ -475,7 +475,7 @@ async function fetchPurchases(){
       kilos:parseFloat((r[kk]||'0').toString().replace(/[^\d.]/g,''))||0,
       price:parseFloat((r[pck]||'0').toString().replace(/[^\d.]/g,''))||0,
       total:parseFloat((r[tk]||'0').toString().replace(/[^\d.]/g,''))||0
-    })).filter(r=>r.date&&r.product&&r.kilos>0);
+    })).filter(r=>r.date&&r.product&&(r.kilos>0||r.total>0));
     data.sort((a,b)=>b.date.localeCompare(a.date));
     var tb=document.getElementById('purTable');
     if(!data.length){tb.innerHTML='<tr><td colspan="6" class="empty">No purchase records yet</td></tr>';return;}
@@ -698,7 +698,7 @@ async function fetchFarmgate(){
       prices:Object.fromEntries(veggieIdxs.map(i=>[headers[i],
         parseFloat((r[i]||'').toString().replace(/[^0-9.]/g,''))||null
       ]))
-    })).filter(r=>r.date);
+    })).filter(r=>r.date && Object.values(r.prices).some(v=>v&&v>0));
 
     var dates=[...new Set(fgRows.map(r=>r.date))].sort();
     var sel=document.getElementById('fgDateFilter');

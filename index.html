@@ -292,7 +292,7 @@ const GID_PROF    = '1003209625';
 const GID_FG      = '1647876215';
 const REFRESH_MS  = 5 * 60 * 1000;
 
-const url = (id,gid) => `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}&t=${Date.now()}`;
+const url = (id,gid) => `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&gid=${gid}&t=${Date.now()}`;
 
 const VEG_COLORS = {
   'Ampalaya':'#1A6B3C','Kangkong':'#E53935','Pechay':'#1565C0','Kamatis':'#F57F17',
@@ -667,11 +667,23 @@ var fgRows=[],fgCols=[];
 
 async function fetchFarmgate(){
   try{
-    var text=await fetchCSV(PRICE_ID,GID_FG);
-    text=text.replace(/^\uFEFF/,'');
-    var result=Papa.parse(text.trim(),{header:false,skipEmptyLines:true,dynamicTyping:false});
+    // Use sheet name (more reliable than gid= with gviz)
+    var fgUrl=`https://docs.google.com/spreadsheets/d/${PRICE_ID}/gviz/tq?tqx=out:csv&sheet=Farmgate%20Price&t=${Date.now()}`;
+    var fgRes=await fetch(fgUrl);
+    if(!fgRes.ok)throw new Error('HTTP '+fgRes.status);
+    var text=await fgRes.text();
+    text=text.replace(/^\uFEFF/,'').trim();
+
+    // Detect non-CSV responses (HTML login page or gviz JSON error)
+    if(text.startsWith('<')||text.startsWith('google.visualization'))
+      throw new Error('Spreadsheet not publicly accessible. Share it → Anyone with the link → Viewer.');
+
+    var result=Papa.parse(text,{header:false,skipEmptyLines:true,dynamicTyping:false});
     var all=result.data||[];
-    if(all.length<2){document.getElementById('fgBody').innerHTML='<tr><td colspan="2" class="empty">No farmgate data found.</td></tr>';return;}
+    if(all.length<2){
+      document.getElementById('fgBody').innerHTML='<tr><td colspan="26" class="empty">No farmgate data in sheet yet.</td></tr>';
+      return;
+    }
 
     var headers=all[0].map(h=>(h||'').toString().trim());
     var dataRows=all.slice(1);
@@ -680,6 +692,15 @@ async function fetchFarmgate(){
     var locIdx=headers.findIndex(h=>/location/i.test(h));
     if(dateIdx<0)dateIdx=0;
 
+    // Helper: convert gviz Date(y,m,d) format → readable string
+    function parseGvizDate(val){
+      var s=(val||'').toString().trim();
+      var m=s.match(/^Date\((\d+),(\d+),(\d+)\)$/i);
+      if(m)return`${m[1]}-${String(+m[2]+1).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`;
+      return s;
+    }
+
+    // Veggie columns: skip date, location, empty, and summary labels
     var veggieIdxs=[];
     headers.forEach((h,i)=>{
       if(i===dateIdx||i===locIdx||!h)return;
@@ -688,17 +709,24 @@ async function fetchFarmgate(){
     });
     fgCols=veggieIdxs.map(i=>headers[i]);
 
-    fgRows=dataRows.filter(r=>{
-      var d=(r[dateIdx]||'').toString().trim();
-      if(!d||/latest|average|avg|min|max/i.test(d))return false;
-      return true;
-    }).map(r=>({
-      date:(r[dateIdx]||'').toString().trim(),
-      location:(locIdx>=0?(r[locIdx]||'').toString().trim():'—')||'—',
-      prices:Object.fromEntries(veggieIdxs.map(i=>[headers[i],
+    fgRows=dataRows.map(r=>{
+      var rawDate=(r[dateIdx]||'').toString().trim();
+      var date=parseGvizDate(rawDate);
+      // If date matches summary labels, skip
+      if(!date||/latest|average|avg|min|max/i.test(date))return null;
+      // Location: if cell looks like a price (₱ or pure number with no letters), treat as blank
+      var rawLoc=locIdx>=0?(r[locIdx]||'').toString().trim():'';
+      var location=(rawLoc&&!/^[₱\d]/.test(rawLoc))?rawLoc:'—';
+      var prices=Object.fromEntries(veggieIdxs.map(i=>[headers[i],
         parseFloat((r[i]||'').toString().replace(/[^0-9.]/g,''))||null
-      ]))
-    })).filter(r=>r.date && Object.values(r.prices).some(v=>v&&v>0));
+      ]));
+      return{date,location,prices};
+    }).filter(r=>r&&r.date&&Object.values(r.prices).some(v=>v&&v>0));
+
+    if(!fgRows.length){
+      document.getElementById('fgBody').innerHTML='<tr><td colspan="26" class="empty">Farmgate sheet found but no price data rows yet.</td></tr>';
+      return;
+    }
 
     var dates=[...new Set(fgRows.map(r=>r.date))].sort();
     var sel=document.getElementById('fgDateFilter');
@@ -709,7 +737,9 @@ async function fetchFarmgate(){
     updateFarmgateStats();
     toast('✅ Farmgate prices updated');
   }catch(e){
-    document.getElementById('fgBody').innerHTML='<tr><td colspan="2" class="empty">⚠️ '+e.message+'</td></tr>';
+    var el=document.getElementById('fgBody');
+    if(el)el.innerHTML='<tr><td colspan="26" class="empty">⚠️ '+e.message+'</td></tr>';
+    console.error('fetchFarmgate:',e);
   }
 }
 
@@ -720,7 +750,10 @@ function fgCell(v){
 }
 
 function renderFarmgate(){
-  if(!fgRows.length)return;
+  if(!fgRows.length){
+    document.getElementById('fgBody').innerHTML='<tr><td colspan="26" class="empty">No farmgate data to display.</td></tr>';
+    return;
+  }
   var dateF=document.getElementById('fgDateFilter').value;
   var rows=dateF==='all'?fgRows:fgRows.filter(r=>r.date===dateF);
 

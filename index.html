@@ -723,7 +723,7 @@ async function fetchFarmgate(){
   /* Then try to pull live data via gviz JSON (more reliable than CSV) */
   try{
     var urls=[
-      'https://docs.google.com/spreadsheets/d/'+PRICE_ID+'/gviz/tq?tqx=out:json&sheet=Farmgate_Price&headers=1&t='+Date.now(),
+      'https://docs.google.com/spreadsheets/d/'+PRICE_ID+'/gviz/tq?tqx=out:json&sheet=Farmgate_Prices&headers=1&t='+Date.now(),
       'https://docs.google.com/spreadsheets/d/'+PRICE_ID+'/gviz/tq?tqx=out:json&gid='+GID_FG+'&headers=1&t='+Date.now()
     ];
     var resp=null;

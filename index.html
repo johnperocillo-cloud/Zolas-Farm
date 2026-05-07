@@ -741,7 +741,13 @@ async function fetchFarmgate(){
     for(var i=0;i<urls.length;i++){
       try{
         var res=await fetchWithTimeout(urls[i],8000);
-        if(!res.ok)continue;
+console.log("Trying URL:", urls[i]);
+console.log("Status:", res.status);
+        
+  if(!res.ok){
+   console.error("Fetch failed:", res.status);
+   continue;
+}
         var raw=await res.text();
         console.log(raw);
         raw=raw.replace(/^\uFEFF/,'').trim();

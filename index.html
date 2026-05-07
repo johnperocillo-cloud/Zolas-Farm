@@ -724,7 +724,6 @@ async function fetchFarmgate(){
   try{
     var urls=[
       'https://docs.google.com/spreadsheets/d/'+PRICE_ID+'/gviz/tq?tqx=out:json&sheet=Farmgate_Prices&headers=1&t='+Date.now(),
-      'https://docs.google.com/spreadsheets/d/'+PRICE_ID+'/gviz/tq?tqx=out:json&gid='+GID_FG+'&headers=1&t='+Date.now()
     ];
     var resp=null;
     for(var i=0;i<urls.length;i++){

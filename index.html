@@ -692,8 +692,20 @@ var FG_DATA=[
 
 function loadFallbackFarmgate(){
   fgCols=FG_COLS.slice();
-  fgRows=FG_DATA.map(function(r){return{date:r.date,location:r.location,prices:Object.assign({},r.prices)};});
+
+  fgRows=FG_DATA.map(function(r){
+    return{
+      date:r.date,
+      location:r.location,
+      prices:Object.assign({},r.prices)
+    };
+  });
+
   populateFgUI('cached');
+
+  renderFarmgate();
+  updateFarmgateStats();
+  renderFarmgateChart();
 }
 
 function populateFgUI(source){

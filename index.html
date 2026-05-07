@@ -195,19 +195,20 @@ td{padding:11px 14px;vertical-align:middle}
     <div class="sc sr"><div class="sc-ico">🔴</div><div class="sc-lbl">Highest Farmgate</div><div class="sc-val" id="fg3">—</div><div class="sc-sub" id="fg3n">—</div></div>
     <div class="sc sb"><div class="sc-ico">🟢</div><div class="sc-lbl">Lowest Farmgate</div><div class="sc-val" id="fg4">—</div><div class="sc-sub" id="fg4n">—</div></div>
   </div>
-  <!-- Chart panel -->
-  <div class="panel" id="fgChartPanel">
+  <!-- Farmgate chart -->
+  <div class="panel" id="fgChartPanel" style="display:none">
     <div class="ph">
       <div class="ph-title"><div class="dot" style="background:var(--amber)"></div><h2>📈 Farmgate Price Trends</h2></div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <select id="fgChartVeg" onchange="renderFarmgateChart()" style="font-family:'DM Sans',sans-serif;font-size:12px;border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--td);background:#fff;outline:none">
           <option value="all">All Vegetables</option>
         </select>
-        <span style="font-size:11px;color:var(--tl)">₱/kg across survey dates · click legend to toggle</span>
+        <span style="font-size:11px;color:var(--tl)">₱/kg across survey dates · click legend to toggle lines</span>
       </div>
     </div>
     <div class="pb"><div class="chart-wrap"><canvas id="fgChart"></canvas></div><div class="leg" id="fgLeg"></div></div>
   </div>
+
   <div class="panel">
     <div class="ph">
       <div class="ph-title"><div class="dot" style="background:var(--amber);animation-delay:.3s"></div><h2>🌾 Farmgate Prices by Location</h2></div>
@@ -678,7 +679,7 @@ async function fetchProfit(){
 /* ══ FARMGATE PRICES ══════════════════════════════════ */
 var fgRows=[],fgCols=[],fgChart=null,fgHiddenDS=new Set();
 
-/* ── Fallback data (from Drive API read, auto-updated by fetchFarmgate) ── */
+/* Fallback data read directly from Drive — always shows instantly */
 var FG_COLS=['Ahos','Ampalaya','Alugbati','Atsal (Bell Paper)','Bombay pickles','Bombay M','Bombay L','Camote','Chayote','Carrots','Gabi','Repolyo (Cabbage)','Kalabasa','Kamatis','Lettuce Ball','Luy-a','Ombok (Pechay)','Okra','Pechay','Pipino','Raddish','Sibuyas Dahunan (Spring Onions)','Sili Labuyo','Sili Halang/kulikot','Sili Espada','Sweetcorn','Talong'];
 var FG_DATA=[
   {date:'2026-04-27',location:'—',prices:{'Ampalaya':60,'Bombay L':45,'Carrots':130,'Kalabasa':20,'Kamatis':30,'Ombok (Pechay)':60,'Talong':80}},
@@ -690,13 +691,13 @@ var FG_DATA=[
   {date:'2026-05-07',location:'Mindoro Trucking & Carbon',prices:{'Bombay M':55,'Bombay L':42}}
 ];
 
-function loadFallbackFarmgate(){
+function loadFgFallback(){
   fgCols=FG_COLS.slice();
   fgRows=FG_DATA.map(function(r){return{date:r.date,location:r.location,prices:Object.assign({},r.prices)};});
-  populateFgUI('cached');
+  populateFgUI(false);
 }
 
-function populateFgUI(source){
+function populateFgUI(isLive){
   var dates=[...new Set(fgRows.map(function(r){return r.date;}))].sort();
   var sel=document.getElementById('fgDateFilter');
   sel.innerHTML='<option value="all">All Dates</option>'+dates.map(function(d){return'<option value="'+d+'">'+d+'</option>';}).join('');
@@ -705,22 +706,21 @@ function populateFgUI(source){
   renderFarmgate();
   renderFarmgateChart();
   updateFarmgateStats();
-  if(source==='live')toast('✅ Farmgate prices live from sheet');
-  else toast('ℹ️ Showing saved farmgate data – live refresh pending');
+  document.getElementById('fgChartPanel').style.display='';
+  if(isLive)toast('✅ Farmgate prices live from sheet');
 }
 
 async function fetchWithTimeout(url,ms){
-  var ctrl=new AbortController();
-  var tid=setTimeout(function(){ctrl.abort();},ms||10000);
+  var ctrl=new AbortController(),tid=setTimeout(function(){ctrl.abort();},ms||8000);
   try{var r=await fetch(url,{signal:ctrl.signal});clearTimeout(tid);return r;}
   catch(e){clearTimeout(tid);throw e;}
 }
 
 async function fetchFarmgate(){
-  /* Always show fallback immediately so tab is never blank */
-  loadFallbackFarmgate();
+  /* Show fallback immediately — never leaves Loading... */
+  loadFgFallback();
 
-  /* Then try to pull live data via gviz JSON (more reliable than CSV) */
+  /* Attempt live pull via gviz JSON (more reliable than CSV for this sheet) */
   try{
     var urls=[
       'https://docs.google.com/spreadsheets/d/'+PRICE_ID+'/gviz/tq?tqx=out:json&sheet=Farmgate%20Price&headers=1&t='+Date.now(),
@@ -731,64 +731,42 @@ async function fetchFarmgate(){
       try{
         var res=await fetchWithTimeout(urls[i],8000);
         if(!res.ok)continue;
-        var raw=await res.text();
-        raw=raw.replace(/^\uFEFF/,'').trim();
+        var raw=(await res.text()).replace(/^\uFEFF/,'').trim();
         var m=raw.match(/setResponse\(([\s\S]+)\)\s*;?\s*$/);
         if(!m)continue;
-        var parsed=JSON.parse(m[1]);
-        if(parsed.status==='ok'&&parsed.table&&parsed.table.rows&&parsed.table.rows.length>0){resp=parsed;break;}
+        var p=JSON.parse(m[1]);
+        if(p.status==='ok'&&p.table&&p.table.rows&&p.table.rows.length){resp=p;break;}
       }catch(e2){continue;}
     }
-    if(!resp)return; /* fallback already shown */
+    if(!resp)return;
 
-    var table=resp.table;
-    var colLabels=table.cols.map(function(c){return(c.label||c.id||'').trim();});
-    var dateIdx=colLabels.findIndex(function(h){return/date/i.test(h);});
-    var locIdx=colLabels.findIndex(function(h){return/location/i.test(h);});
-    if(dateIdx<0)dateIdx=0;
+    var tbl=resp.table;
+    var cols=tbl.cols.map(function(c){return(c.label||c.id||'').trim();});
+    var dIdx=cols.findIndex(function(h){return/date/i.test(h);});
+    var lIdx=cols.findIndex(function(h){return/location/i.test(h);});
+    if(dIdx<0)dIdx=0;
+    var vIdxs=[];
+    cols.forEach(function(h,i){if(i===dIdx||i===lIdx||!h||/latest|average|avg|min|max/i.test(h))return;vIdxs.push(i);});
 
-    var veggieIdxs=[];
-    colLabels.forEach(function(h,i){
-      if(i===dateIdx||i===locIdx||!h)return;
-      if(/latest|average|avg|min|max/i.test(h))return;
-      veggieIdxs.push(i);
-    });
-    var liveCols=veggieIdxs.map(function(i){return colLabels[i];});
-
-    function cellDate(cell){
-      if(!cell||cell.v===null||cell.v===undefined)return'';
-      var s=String(cell.v).trim();
-      var dm=s.match(/^Date\((\d+),(\d+),(\d+)\)$/i);
-      if(dm)return dm[1]+'-'+String(+dm[2]+1).padStart(2,'0')+'-'+String(+dm[3]).padStart(2,'0');
-      if(cell.f)return cell.f.trim();
-      return s;
+    function cDate(c){
+      if(!c||c.v==null)return'';
+      var s=String(c.v),m=s.match(/^Date\((\d+),(\d+),(\d+)\)$/i);
+      if(m)return m[1]+'-'+String(+m[2]+1).padStart(2,'0')+'-'+String(+m[3]).padStart(2,'0');
+      return(c.f||s).trim();
     }
-    function cellNum(cell){
-      if(!cell||cell.v===null||cell.v===undefined)return null;
-      var n=parseFloat(String(cell.v).replace(/[^0-9.]/g,''));
-      return isNaN(n)?null:n;
-    }
+    function cNum(c){if(!c||c.v==null)return null;var n=parseFloat(String(c.v).replace(/[^0-9.]/g,''));return isNaN(n)?null:n;}
 
-    var liveRows=table.rows.map(function(row){
-      var cells=row.c||[];
-      var date=cellDate(cells[dateIdx]);
+    var liveRows=tbl.rows.map(function(row){
+      var cs=row.c||[],date=cDate(cs[dIdx]);
       if(!date||/latest|average|avg|min|max/i.test(date))return null;
-      var rawLoc=locIdx>=0&&cells[locIdx]?(cells[locIdx].f||String(cells[locIdx].v||'')).trim():'';
-      var location=(rawLoc&&!/^[₱\d]/.test(rawLoc))?rawLoc:'—';
-      var prices={};
-      veggieIdxs.forEach(function(i){prices[colLabels[i]]=cellNum(cells[i]);});
-      return{date:date,location:location,prices:prices};
+      var rawL=lIdx>=0&&cs[lIdx]?(cs[lIdx].f||String(cs[lIdx].v||'')).trim():'';
+      var loc=(rawL&&!/^[₱\d]/.test(rawL))?rawL:'—';
+      var prices={};vIdxs.forEach(function(i){prices[cols[i]]=cNum(cs[i]);});
+      return{date:date,location:loc,prices:prices};
     }).filter(function(r){return r&&r.date&&Object.values(r.prices).some(function(v){return v&&v>0;});});
 
-    if(liveRows.length){
-      fgCols=liveCols;
-      fgRows=liveRows;
-      populateFgUI('live');
-    }
-  }catch(e){
-    console.warn('Farmgate live fetch failed:',e);
-    /* fallback already showing – silently continue */
-  }
+    if(liveRows.length){fgCols=vIdxs.map(function(i){return cols[i];});fgRows=liveRows;populateFgUI(true);}
+  }catch(e){console.warn('Farmgate live fetch:',e);}
 }
 
 function fgCell(v){
@@ -804,7 +782,7 @@ function renderFarmgate(){
   var head=document.getElementById('fgHead');
   head.innerHTML='<th style="min-width:100px;position:sticky;left:0;background:var(--g900)">Date</th>'+
     '<th style="min-width:160px;position:sticky;left:100px;background:var(--g900)">Location</th>'+
-    fgCols.map(function(c){return'<th style="min-width:88px;white-space:normal;font-size:9px;line-height:1.35;text-align:center">'+c+'</th>';}).join('');
+    fgCols.map(function(c){return'<th style="min-width:85px;white-space:normal;font-size:9px;line-height:1.3;text-align:center">'+c+'</th>';}).join('');
   var sT=function(t,x){return'<td style="position:sticky;'+x+';background:#fff;z-index:1;font-size:12px">'+t+'</td>';};
   var sG=function(t,x){return'<td style="position:sticky;'+x+';background:#f0fdf4;z-index:1;font-weight:700;font-size:11px;color:var(--g900)">'+t+'</td>';};
   var body=rows.map(function(r){
@@ -812,17 +790,16 @@ function renderFarmgate(){
       sT('<span style="color:var(--tl);font-size:11px">'+r.location+'</span>','left:100px')+
       fgCols.map(function(c){return fgCell(r.prices[c]);}).join('')+'</tr>';
   }).join('');
-  var summaries=[
+  var sumFns=[
     ['Latest ₱',function(c){for(var i=rows.length-1;i>=0;i--){var v=rows[i].prices[c];if(v&&v>0)return v;}return null;}],
-    ['Avg ₱',function(c){var vs=rows.map(function(r){return r.prices[c];}).filter(function(v){return v&&v>0;});return vs.length?Math.round(vs.reduce(function(a,b){return a+b;})/vs.length):null;}],
-    ['Min ₱',function(c){var vs=rows.map(function(r){return r.prices[c];}).filter(function(v){return v&&v>0;});return vs.length?Math.min.apply(null,vs):null;}],
-    ['Max ₱',function(c){var vs=rows.map(function(r){return r.prices[c];}).filter(function(v){return v&&v>0;});return vs.length?Math.max.apply(null,vs):null;}]
+    ['Avg ₱',   function(c){var vs=rows.map(function(r){return r.prices[c];}).filter(function(v){return v&&v>0;});return vs.length?Math.round(vs.reduce(function(a,b){return a+b;})/vs.length):null;}],
+    ['Min ₱',   function(c){var vs=rows.map(function(r){return r.prices[c];}).filter(function(v){return v&&v>0;});return vs.length?Math.min.apply(null,vs):null;}],
+    ['Max ₱',   function(c){var vs=rows.map(function(r){return r.prices[c];}).filter(function(v){return v&&v>0;});return vs.length?Math.max.apply(null,vs):null;}]
   ];
-  var foot=summaries.map(function(s){
-    var lbl=s[0],fn=s[1];
-    return'<tr style="background:#f0fdf4;border-top:2px solid #86efac">'+sG(lbl,'left:0')+sG('','left:100px')+
+  var foot=sumFns.map(function(s){
+    return'<tr style="background:#f0fdf4;border-top:2px solid #86efac">'+sG(s[0],'left:0')+sG('','left:100px')+
       fgCols.map(function(c){
-        var v=fn(c);if(!v)return'<td style="text-align:center;color:#d1d5db">—</td>';
+        var v=s[1](c);if(!v)return'<td style="text-align:center;color:#d1d5db">—</td>';
         var st=v<25?'background:#d1fae5;color:#065f46':v>60?'background:#fee2e2;color:#991b1b':'background:#fef3c7;color:#92400e';
         return'<td style="text-align:center"><span style="'+st+';padding:2px 7px;border-radius:4px;font-size:12px;font-weight:700">₱'+v+'</span></td>';
       }).join('')+'</tr>';
@@ -838,12 +815,29 @@ function renderFarmgateChart(){
   var pal=['#2E8B57','#DC143C','#1565C0','#FF8C00','#8B008B','#008B8B','#E53935','#FF6B35','#6A1B9A','#00838F','#F57F17','#4CAF50','#EC407A','#29B6F6','#AB47BC','#FF7043','#26A69A','#78909C'];
   var datasets=cols.map(function(col,i){
     var c=pal[i%pal.length];
-    var pts=dates.map(function(d){var r=fgRows.find(function(x){return x.date===d;});return r&&r.prices[col]>0?r.prices[col]:null;});
-    return{label:col,data:pts,borderColor:c,backgroundColor:c+'22',pointBackgroundColor:c,pointRadius:5,pointHoverRadius:8,borderWidth:2.5,tension:0.35,spanGaps:true,hidden:fgHiddenDS.has(col)};
+    return{
+      label:col,
+      data:dates.map(function(d){var r=fgRows.find(function(x){return x.date===d;});return r&&r.prices[col]>0?r.prices[col]:null;}),
+      borderColor:c,backgroundColor:c+'22',pointBackgroundColor:c,
+      pointRadius:5,pointHoverRadius:8,borderWidth:2.5,tension:0.35,spanGaps:true,
+      hidden:fgHiddenDS.has(col)
+    };
   });
   var ctx=document.getElementById('fgChart').getContext('2d');
   if(fgChart)fgChart.destroy();
-  fgChart=new Chart(ctx,{type:'line',data:{labels:dates,datasets:datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#1a3d2b',titleColor:'#c8e6c9',bodyColor:'#fff',padding:12,cornerRadius:10,callbacks:{title:function(i){return'📅 '+i[0].label;},label:function(i){return i.parsed.y===null?null:'  '+i.dataset.label+': ₱'+i.parsed.y;}}}},scales:{x:{grid:{color:'rgba(0,0,0,.05)'},ticks:{font:{family:'DM Sans',size:11},color:'#718096',maxRotation:30}},y:{grid:{color:'rgba(0,0,0,.06)'},ticks:{font:{family:'DM Sans',size:11},color:'#718096',callback:function(v){return'₱'+v;}},beginAtZero:false}}}});
+  fgChart=new Chart(ctx,{type:'line',data:{labels:dates,datasets:datasets},options:{
+    responsive:true,maintainAspectRatio:false,
+    interaction:{mode:'index',intersect:false},
+    plugins:{
+      legend:{display:false},
+      tooltip:{backgroundColor:'#1a3d2b',titleColor:'#c8e6c9',bodyColor:'#fff',padding:12,cornerRadius:10,
+        callbacks:{title:function(i){return'📅 '+i[0].label;},label:function(i){return i.parsed.y===null?null:'  '+i.dataset.label+': ₱'+i.parsed.y;}}}
+    },
+    scales:{
+      x:{grid:{color:'rgba(0,0,0,.05)'},ticks:{font:{family:'DM Sans',size:11},color:'#718096',maxRotation:30,maxTicksLimit:10}},
+      y:{grid:{color:'rgba(0,0,0,.06)'},ticks:{font:{family:'DM Sans',size:11},color:'#718096',callback:function(v){return'₱'+v;}},beginAtZero:false}
+    }
+  }});
   var leg=document.getElementById('fgLeg');leg.innerHTML='';
   datasets.forEach(function(d,i){
     var el=document.createElement('div');el.className='li'+(d.hidden?' hidden':'');

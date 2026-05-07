@@ -785,10 +785,16 @@ async function fetchFarmgate(){
       fgRows=liveRows;
       populateFgUI('live');
     }
-  }catch(e){
-    console.warn('Farmgate live fetch failed:',e);
-    /* fallback already showing – silently continue */
-  }
+catch(e){
+  console.warn('Farmgate live fetch failed:', e);
+
+  // Force fallback rendering
+  loadFallbackFarmgate();
+
+  // Refresh UI
+  populateFgUI('fallback');
+
+  console.log('Fallback data loaded');
 }
 
 function fgCell(v){
